@@ -2,13 +2,13 @@ import boto3
 import io
 import zipfile
 import os
+s3 = boto3.client('s3')
 
 def uploadToS3(fileToUpload, bucketName, s3Path):
     try:
-        # Create an S3 client
-        s3 = boto3.client('s3')
         # Upload a file to the specified bucket
-        s3.put_object(Bucket=bucketName, Key=s3Path, Body=fileToUpload)
+        s3.upload_file('./zips/' + fileToUpload,bucketName,s3Path)
+        # s3.put_object(Bucket=bucketName, Key=s3Path, Body=fileToUpload)
         print("Upload successful!")
     except FileNotFoundError:
         print(f"The file '{fileToUpload}' was not found.")
@@ -16,6 +16,7 @@ def uploadToS3(fileToUpload, bucketName, s3Path):
         print("Credentials not available. Make sure you have AWS credentials configured.")
     except Exception as e:
         print(f"An error occurred: {str(e)}")
+    return True
 
 def iterate_bucket_items(bucketName):
     """
@@ -28,23 +29,38 @@ def iterate_bucket_items(bucketName):
     """
 
 
-    s3 = boto3.client('s3')
+    
     paginator = s3.get_paginator('list_objects_v2')
     page_iterator = paginator.paginate(Bucket=bucketName)
+    localPath = "./zips/"
 
     for page in page_iterator:
         if page['KeyCount'] > 0:
             for item in page['Contents']:
                 fileKey = item['Key']
                 if(fileKey.endswith('.zip')):
-                    sendTo = fileKey.replace("unprocessed", "processed")
+                    sendTo = fileKey.replace("unprocessed", "processed").replace('.zip','')
                     print(f"Unzipping and deleting {fileKey}")
                     zip_obj = s3.get_object(Bucket=bucketName, Key=fileKey)
-                    zip_data = io.BytesIO(zip_obj['Body'].read())
-                    uploadToS3(zip_data, 'eg-datapipeline-valorant-dev', sendTo)
-                    s3.delete_object(Bucket=bucketName, Key=fileKey)
+                    with zipfile.ZipFile(io.BytesIO(zip_obj['Body'].read())) as zip_ref:
+                        zip_ref.extractall(localPath)
+                    files = [f for f in os.listdir(localPath) if os.path.isfile(os.path.join(localPath, f))]
+                    for file in files:
+                        if(uploadToS3(file,bucketName,sendTo)):
+                            s3.delete_object(Bucket=bucketName, Key=fileKey)
+                        try:
+                            os.remove('./zips/' + file)
+                            print(f"Deleted file: {file}")
+                        except OSError as e:
+                            print(f"Error deleting file: {file}, {e}")
+
+                        
 
 
+
+
+                    # uploadToS3(zip_data, 'eg-datapipeline-valorant-dev', sendTo)
+                    
 
 iterate_bucket_items('eg-datapipeline-valorant-dev')
 print("DONE")
